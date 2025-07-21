@@ -43,7 +43,10 @@ This script automates the offline installation of Windows Subsystem for Linux (W
    - Run the script using the following command:
    ```powershell
    .\WSL-Offline-Install.ps1
-   
+## ✅ Fixes
+
+Replaced invalid `Get-FileNameWithoutExtension` with `[System.IO.Path]::GetFileNameWithoutExtension()` for compatibility across Windows builds.
+ 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.   
