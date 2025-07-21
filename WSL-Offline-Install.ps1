@@ -5,71 +5,79 @@ $LinuxDistroPath = Read-Host "Please provide the path to the Linux distribution 
 $osInfo = Get-WmiObject -Class Win32_OperatingSystem
 $osCaption = $osInfo.Caption
 
-if ($osCaption -match "Windows Server 2019") {
-    Write-Host "Detected OS: Windows Server 2019"
-    # Install WSL on Windows Server 2019
-    Install-WindowsFeature -Name Microsoft-Windows-Subsystem-Linux
-    Install-WindowsFeature -Name VirtualMachinePlatform -IncludeManagementTools
-} elseif ($osCaption -match "Windows Server 2022") {
-    Write-Host "Detected OS: Windows Server 2022"
-    # Install WSL on Windows Server 2022
-    Install-WindowsFeature -Name Microsoft-Windows-Subsystem-Linux
-    Install-WindowsFeature -Name VirtualMachinePlatform -IncludeManagementTools
-} elseif ($osCaption -match "Windows 10") {
-    Write-Host "Detected OS: Windows 10"
-    # Install WSL on Windows 10
-    Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
-    Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
-} elseif ($osCaption -match "Windows 11") {
-    Write-Host "Detected OS: Windows 11"
-    # Install WSL on Windows 11
-    wsl --install
-} else {
-    Write-Host "This script supports only Windows Server 2019, Windows Server 2022, Windows 10, or Windows 11."
-    exit
+Write-Host "Detected OS: $osCaption"
+
+switch -Wildcard ($osCaption) {
+    "*Windows Server 2019*" {
+        Install-WindowsFeature -Name Microsoft-Windows-Subsystem-Linux
+        Install-WindowsFeature -Name VirtualMachinePlatform -IncludeManagementTools
+    }
+    "*Windows Server 2022*" {
+        Install-WindowsFeature -Name Microsoft-Windows-Subsystem-Linux
+        Install-WindowsFeature -Name VirtualMachinePlatform -IncludeManagementTools
+    }
+    "*Windows 10*" {
+        Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
+        Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
+    }
+    "*Windows 11*" {
+        wsl --install
+    }
+    default {
+        Write-Host "This script supports only Windows Server 2019, 2022, Windows 10 or 11." -ForegroundColor Red
+        exit 1
+    }
 }
 
-# Save paths to a temporary file so the script can continue after a reboot
+# Save path to a temporary script for running after reboot
 $TempFile = "$env:TEMP\wsl_install_temp.ps1"
+
 $script = @"
 param (
     [string]`$LinuxDistroPath
 )
 
 # Install the Linux distribution
-Add-AppxPackage -Path `$LinuxDistroPath
+Add-AppxPackage -Path `"`$LinuxDistroPath`"
 
-# Check if the distribution supports WSL 2 and upgrade accordingly
-\$distroName = (Get-AppxPackage -Name * | Where-Object { \$_ -match `(Get-FileNameWithoutExtension `$LinuxDistroPath) }).Name
+# Extract file name without extension
+\$distroBaseName = [System.IO.Path]::GetFileNameWithoutExtension(`$LinuxDistroPath)
 
-if (\$distroName -match "Ubuntu" -or \$distroName -match "Debian" -or \$distroName -match "Kali" -or \$distroName -match "openSUSE" -or \$distroName -match "SLES") {
-    Write-Host "Upgrading to WSL 2 for this distribution..."
-    wsl --set-version \$distroName 2
+# Get Appx package name by matching the base file name
+\$distroName = (Get-AppxPackage | Where-Object { \$_ .Name -match \$distroBaseName }).Name
+
+if ([string]::IsNullOrWhiteSpace(\$distroName)) {
+    Write-Host "Unable to determine installed distro name. Skipping WSL version setup." -ForegroundColor Yellow
 } else {
-    Write-Host "This distribution does not support WSL 2 or WSL 2 is not available for this distribution."
+    # Attempt to upgrade to WSL 2
+    if (\$distroName -match "Ubuntu|Debian|Kali|openSUSE|SLES") {
+        Write-Host "Upgrading \$distroName to WSL 2..."
+        wsl --set-version \$distroName 2
+    } else {
+        Write-Host "Distro \$distroName may not support WSL 2 or is not recognized."
+    }
+
+    # Set WSL 2 as the default for new installs
+    wsl --set-default-version 2
 }
 
-# Set WSL 2 as the default version for new distributions (optional)
-wsl --set-default-version 2
+# Clean up
+Unregister-ScheduledTask -TaskName "WSLInstallTask" -Confirm:\$false -ErrorAction SilentlyContinue
+Remove-Item "`$TempFile" -Force
 
-# Remove the scheduled task and the temporary file
-Unregister-ScheduledTask -TaskName "WSLInstallTask" -Confirm:$false
-Remove-Item `$TempFile
-
-Write-Host "Installation complete! WSL setup is done."
+Write-Host "Installation complete! WSL setup is done." -ForegroundColor Green
 "@
 
-$script | Out-File -FilePath $TempFile -Encoding UTF8
+# Write the script to file
+$script | Out-File -FilePath $TempFile -Encoding UTF8 -Force
 
-# Create a scheduled task to run the script after system restart
+# Register task to run after reboot
 $action = New-ScheduledTaskAction -Execute 'PowerShell.exe' -Argument "-ExecutionPolicy Bypass -File `"$TempFile`" -LinuxDistroPath `"$LinuxDistroPath`""
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-$taskname = "WSLInstallTask"
+Register-ScheduledTask -TaskName "WSLInstallTask" -Action $action -Trigger $trigger -Principal $principal -Force
 
-Register-ScheduledTask -TaskName $taskname -Action $action -Trigger $trigger -Principal $principal
-
-# Restart the system
-Write-Host "The system will restart in 10 seconds..."
+# Restart system
+Write-Host "The system will restart in 10 seconds to complete installation..." -ForegroundColor Cyan
 Start-Sleep -Seconds 10
 Restart-Computer
