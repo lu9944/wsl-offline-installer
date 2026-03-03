@@ -16,12 +16,10 @@ switch -Wildcard ($osCaption) {
         Install-WindowsFeature -Name Microsoft-Windows-Subsystem-Linux
         Install-WindowsFeature -Name VirtualMachinePlatform -IncludeManagementTools
     }
-    "*Windows 10*" {
+    "*Windows 10*", "*Windows 11*" {
+        # FIX: Unified Windows 10 and 11 to use the pure offline enablement method
         Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart
         Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
-    }
-    "*Windows 11*" {
-        wsl --install
     }
     default {
         Write-Host "This script supports only Windows Server 2019, 2022, Windows 10 or 11." -ForegroundColor Red
@@ -32,6 +30,7 @@ switch -Wildcard ($osCaption) {
 # Save path to a temporary script for running after reboot
 $TempFile = "$env:TEMP\wsl_install_temp.ps1"
 
+# Note: Escaped variables properly with backticks (`) for PowerShell Here-String
 $script = @"
 param (
     [string]`$LinuxDistroPath
@@ -41,20 +40,20 @@ param (
 Add-AppxPackage -Path `"`$LinuxDistroPath`"
 
 # Extract file name without extension
-\$distroBaseName = [System.IO.Path]::GetFileNameWithoutExtension(`$LinuxDistroPath)
+`$distroBaseName = [System.IO.Path]::GetFileNameWithoutExtension(`$LinuxDistroPath)
 
 # Get Appx package name by matching the base file name
-\$distroName = (Get-AppxPackage | Where-Object { \$_ .Name -match \$distroBaseName }).Name
+`$distroName = (Get-AppxPackage | Where-Object { `$_.Name -match `$distroBaseName }).Name
 
-if ([string]::IsNullOrWhiteSpace(\$distroName)) {
+if ([string]::IsNullOrWhiteSpace(`$distroName)) {
     Write-Host "Unable to determine installed distro name. Skipping WSL version setup." -ForegroundColor Yellow
 } else {
     # Attempt to upgrade to WSL 2
-    if (\$distroName -match "Ubuntu|Debian|Kali|openSUSE|SLES") {
-        Write-Host "Upgrading \$distroName to WSL 2..."
-        wsl --set-version \$distroName 2
+    if (`$distroName -match "Ubuntu|Debian|Kali|openSUSE|SLES") {
+        Write-Host "Upgrading `$distroName to WSL 2..."
+        wsl --set-version `$distroName 2
     } else {
-        Write-Host "Distro \$distroName may not support WSL 2 or is not recognized."
+        Write-Host "Distro `$distroName may not support WSL 2 or is not recognized."
     }
 
     # Set WSL 2 as the default for new installs
@@ -62,8 +61,8 @@ if ([string]::IsNullOrWhiteSpace(\$distroName)) {
 }
 
 # Clean up
-Unregister-ScheduledTask -TaskName "WSLInstallTask" -Confirm:\$false -ErrorAction SilentlyContinue
-Remove-Item "`$TempFile" -Force
+Unregister-ScheduledTask -TaskName "WSLInstallTask" -Confirm:`$false -ErrorAction SilentlyContinue
+Remove-Item "$TempFile" -Force
 
 Write-Host "Installation complete! WSL setup is done." -ForegroundColor Green
 "@
