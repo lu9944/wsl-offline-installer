@@ -1,0 +1,224 @@
+name: Build offline WSL2 package
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_name:
+        description: Release asset/artifact name without .zip
+        required: true
+        default: wsl2-offline-ubuntu-24.04
+      distro_name:
+        description: WSL distro name imported by the install script
+        required: true
+        default: Ubuntu-24.04
+      distro_rootfs_url:
+        description: Linux rootfs image URL
+        required: true
+        default: https://cloud-images.ubuntu.com/wsl/releases/24.04/current/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz
+      wsl_arch:
+        description: WSL MSI architecture
+        required: true
+        type: choice
+        options:
+          - x64
+          - arm64
+        default: x64
+      release_tag:
+        description: Optional existing release tag to upload the zip to
+        required: false
+        default: ""
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare metadata
+        id: meta
+        shell: bash
+        env:
+          INPUT_PACKAGE_NAME: ${{ inputs.package_name }}
+          INPUT_DISTRO_NAME: ${{ inputs.distro_name }}
+          INPUT_DISTRO_ROOTFS_URL: ${{ inputs.distro_rootfs_url }}
+          INPUT_WSL_ARCH: ${{ inputs.wsl_arch }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+
+          package_name="${INPUT_PACKAGE_NAME:-wsl2-offline-ubuntu-24.04}"
+          distro_name="${INPUT_DISTRO_NAME:-Ubuntu-24.04}"
+          distro_rootfs_url="${INPUT_DISTRO_ROOTFS_URL:-https://cloud-images.ubuntu.com/wsl/releases/24.04/current/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz}"
+          wsl_arch="${INPUT_WSL_ARCH:-x64}"
+          release_tag="${RELEASE_TAG:-${INPUT_RELEASE_TAG:-}}"
+
+          {
+            echo "package_name=$package_name"
+            echo "distro_name=$distro_name"
+            echo "distro_rootfs_url=$distro_rootfs_url"
+            echo "wsl_arch=$wsl_arch"
+            echo "release_tag=$release_tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build package directory
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.meta.outputs.package_name }}
+          DISTRO_NAME: ${{ steps.meta.outputs.distro_name }}
+        run: |
+          set -euo pipefail
+
+          package_dir="dist/package/$PACKAGE_NAME"
+          mkdir -p "$package_dir/packages" "$package_dir/images"
+
+          install -m 0644 01-Enable-WSL2.ps1 "$package_dir/"
+          install -m 0644 02-Install-WSL2-And-Distro.ps1 "$package_dir/"
+          install -m 0644 Uninstall-WSL2.ps1 "$package_dir/"
+          install -m 0644 WSL-Offline-Install.ps1 "$package_dir/"
+          install -m 0644 LICENSE "$package_dir/"
+          install -m 0644 README.md "$package_dir/"
+
+          printf '%s\n' "$DISTRO_NAME" > "$package_dir/DISTRO_NAME.txt"
+
+      - name: Download WSL installer package
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.meta.outputs.package_name }}
+          WSL_ARCH: ${{ steps.meta.outputs.wsl_arch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          package_dir="dist/package/$PACKAGE_NAME"
+          release_json="$(mktemp)"
+          gh api repos/microsoft/WSL/releases/latest > "$release_json"
+
+          wsl_url="$(jq -r --arg arch "$WSL_ARCH" '
+            .assets[]
+            | select(.name | test("^wsl\\..*\\." + $arch + "\\.msi$"))
+            | .browser_download_url
+          ' "$release_json" | head -n 1)"
+
+          if [ -z "$wsl_url" ] || [ "$wsl_url" = "null" ]; then
+            echo "Unable to find WSL $WSL_ARCH MSI in the latest microsoft/WSL release." >&2
+            exit 1
+          fi
+
+          wsl_file="$(basename "$wsl_url")"
+          curl --fail --location --retry 5 --output "$package_dir/packages/$wsl_file" "$wsl_url"
+
+          wsl_digest="$(jq -r --arg url "$wsl_url" '
+            .assets[]
+            | select(.browser_download_url == $url)
+            | .digest // ""
+          ' "$release_json" | head -n 1)"
+
+          {
+            echo "WSL_URL=$wsl_url"
+            echo "WSL_FILE=$wsl_file"
+            echo "WSL_DIGEST=$wsl_digest"
+          } >> "$GITHUB_ENV"
+
+      - name: Download Linux rootfs image
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.meta.outputs.package_name }}
+          DISTRO_NAME: ${{ steps.meta.outputs.distro_name }}
+          DISTRO_ROOTFS_URL: ${{ steps.meta.outputs.distro_rootfs_url }}
+        run: |
+          set -euo pipefail
+
+          package_dir="dist/package/$PACKAGE_NAME"
+          safe_distro_name="$(printf '%s' "$DISTRO_NAME" | tr -c 'A-Za-z0-9._-' '-')"
+          image_file="${safe_distro_name}.rootfs.tar.gz"
+
+          curl --fail --location --retry 5 --output "$package_dir/images/$image_file" "$DISTRO_ROOTFS_URL"
+
+          {
+            echo "DISTRO_IMAGE_URL=$DISTRO_ROOTFS_URL"
+            echo "DISTRO_IMAGE_FILE=$image_file"
+          } >> "$GITHUB_ENV"
+
+      - name: Write manifest and checksums
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.meta.outputs.package_name }}
+          DISTRO_NAME: ${{ steps.meta.outputs.distro_name }}
+        run: |
+          set -euo pipefail
+
+          package_dir="dist/package/$PACKAGE_NAME"
+
+          jq -n \
+            --arg packageName "$PACKAGE_NAME" \
+            --arg distroName "$DISTRO_NAME" \
+            --arg distroImageFile "images/$DISTRO_IMAGE_FILE" \
+            --arg distroImageUrl "$DISTRO_IMAGE_URL" \
+            --arg wslFile "packages/$WSL_FILE" \
+            --arg wslUrl "$WSL_URL" \
+            --arg wslDigest "$WSL_DIGEST" \
+            --arg buildSha "$GITHUB_SHA" \
+            --arg buildRun "$GITHUB_RUN_ID" \
+            '{
+              packageName: $packageName,
+              distroName: $distroName,
+              distroImage: {
+                file: $distroImageFile,
+                source: $distroImageUrl
+              },
+              wslInstaller: {
+                file: $wslFile,
+                source: $wslUrl,
+                digest: $wslDigest
+              },
+              build: {
+                repository: env.GITHUB_REPOSITORY,
+                sha: $buildSha,
+                runId: $buildRun
+              }
+            }' > "$package_dir/manifest.json"
+
+          (
+            cd "$package_dir"
+            find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum
+          ) > "$package_dir/SHA256SUMS"
+
+      - name: Create zip
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.meta.outputs.package_name }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          (
+            cd "dist/package/$PACKAGE_NAME"
+            zip -r "../../$PACKAGE_NAME.zip" .
+          )
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.package_name }}
+          path: dist/${{ steps.meta.outputs.package_name }}.zip
+          if-no-files-found: error
+
+      - name: Upload release asset
+        if: steps.meta.outputs.release_tag != ''
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.meta.outputs.package_name }}
+          RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" "dist/$PACKAGE_NAME.zip" --clobber

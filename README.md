@@ -1,52 +1,98 @@
-# WSL Offline Installation Script
+# WSL2 Offline Installer
 
-This script automates the offline installation of Windows Subsystem for Linux (WSL) on various Windows operating systems, including Windows Server 2019, Windows Server 2022, Windows 10, and Windows 11. It allows you to install a Linux distribution from an Appx file and, if supported, upgrade it to WSL 2. This is particularly useful in environments where internet access is limited or unavailable.
+This repository builds a release-ready offline WSL2 installer package with GitHub Actions.
+The generated zip contains:
 
-## Features
+- WSL2 installer package from the latest `microsoft/WSL` release.
+- Ubuntu 24.04 WSL rootfs image.
+- Two explicit install scripts for machines that require a reboot between feature enablement and distro import.
+- An uninstall script that unregisters WSL distributions and disables WSL components.
 
-- **Offline Installation**: No internet connection is required during the script execution, making it ideal for isolated environments.
-- **Automatic OS Detection**: The script automatically detects your operating system and installs the appropriate WSL components.
-- **Linux Distribution Installation**: Installs a Linux distribution of your choice from a pre-downloaded Appx file.
-- **WSL 2 Upgrade**: Checks if the distribution supports WSL 2 and upgrades it if possible.
-- **Post-Installation Cleanup**: Automatically cleans up temporary files and tasks after installation.
+## Build the Release Package
 
-## Prerequisites
+The workflow is defined in `.github/workflows/build-offline-package.yml`.
 
-- **Linux Distribution Appx File**: Before running the script, download the Linux distribution you wish to install as an Appx file. You can find these files at the following link:
+Manual build:
 
-  [Download WSL Linux Distributions]([https://aka.ms/wslstorepage] or [https://learn.microsoft.com/en-us/windows/wsl/install-manual#downloading-distributions])
+1. Open **Actions**.
+2. Run **Build offline WSL2 package**.
+3. Download the generated artifact.
 
-  Available distributions include:
-  - Ubuntu
-  - Debian
-  - Kali Linux
-  - openSUSE
-  - SUSE Linux Enterprise Server (SLES)
-  
-  Make sure to download the correct version for your system and save it in a known location on your computer.
+Release build:
 
-## Script Usage
+1. Create or publish a GitHub Release.
+2. The workflow runs on the `release.published` event.
+3. The generated zip is uploaded to that release.
 
-### Step 1: Download the Linux Distribution
+Manual release upload:
 
-1. Visit the [WSL Linux Distributions Download Page]([https://aka.ms/wslstorepage] or [https://learn.microsoft.com/en-us/windows/wsl/install-manual#downloading-distributions]).
-2. Download the desired Linux distribution as an Appx file.
-3. Save the file on your local machine in a directory that is easy to access.
+1. Run the workflow manually.
+2. Set `release_tag` to an existing release tag.
+3. The generated zip is uploaded to that release.
 
-### Step 2: Run the Script
+The default package uses Ubuntu 24.04 x64. Workflow inputs can override the distro name, rootfs URL, package name, and WSL architecture.
 
-1. **Open PowerShell as Administrator**:
-   - Right-click on the Start menu and select "Windows PowerShell (Admin)".
-   
-2. **Execute the Script**:
-   - Navigate to the directory where the script (`WSL-Offline-Install.ps1`) is located.
-   - Run the script using the following command:
-   ```powershell
-   .\WSL-Offline-Install.ps1
-## ✅ Fixes
+## Offline Install
 
-Replaced invalid `Get-FileNameWithoutExtension` with `[System.IO.Path]::GetFileNameWithoutExtension()` for compatibility across Windows builds.
- 
+Download the release zip on a machine with internet access, move it to the offline Windows machine, and extract it.
+
+Step 1, run as Administrator:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+.\01-Enable-WSL2.ps1
+```
+
+If Windows asks for a restart, restart before running Step 2.
+
+Step 2, run from the extracted package directory:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+.\02-Install-WSL2-And-Distro.ps1
+```
+
+The script installs the bundled WSL package, imports the bundled Linux rootfs as `Ubuntu-24.04`, sets WSL2 as the default version, and sets the imported distro as the default distro.
+
+Start Linux after installation:
+
+```powershell
+wsl -d Ubuntu-24.04
+```
+
+To replace an existing distro with the same name:
+
+```powershell
+.\02-Install-WSL2-And-Distro.ps1 -Force
+```
+
+## Uninstall
+
+Run as Administrator:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+.\Uninstall-WSL2.ps1
+```
+
+The script unregisters all WSL distributions for the current Windows user, removes the installed WSL package when it can be found, and disables `VirtualMachinePlatform` and `Microsoft-Windows-Subsystem-Linux`.
+
+Use `-Force` to skip the confirmation prompt and `-Restart` to restart automatically when Windows requires it.
+
+## Package Layout
+
+```text
+01-Enable-WSL2.ps1
+02-Install-WSL2-And-Distro.ps1
+Uninstall-WSL2.ps1
+packages/
+  wsl.*.msi
+images/
+  *.rootfs.tar.gz
+manifest.json
+SHA256SUMS
+```
+
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.   
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
