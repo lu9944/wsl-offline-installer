@@ -1,6 +1,6 @@
 name: Build offline WSL2 package
 
-"on":
+on:
   push:
     branches:
       - main
@@ -45,20 +45,24 @@ jobs:
       - name: Prepare metadata
         id: meta
         shell: bash
-        env:
-          INPUT_PACKAGE_NAME: ${{ github.event.inputs.package_name }}
-          INPUT_DISTRO_NAME: ${{ github.event.inputs.distro_name }}
-          INPUT_DISTRO_ROOTFS_URL: ${{ github.event.inputs.distro_rootfs_url }}
-          INPUT_WSL_ARCH: ${{ github.event.inputs.wsl_arch }}
-          INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag }}
         run: |
           set -euo pipefail
 
-          package_name="${INPUT_PACKAGE_NAME:-wsl2-offline-ubuntu-24.04}"
-          distro_name="${INPUT_DISTRO_NAME:-Ubuntu-24.04}"
-          distro_rootfs_url="${INPUT_DISTRO_ROOTFS_URL:-https://cloud-images.ubuntu.com/wsl/releases/24.04/current/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz}"
-          wsl_arch="${INPUT_WSL_ARCH:-x64}"
-          release_tag="${INPUT_RELEASE_TAG:-wsl2-offline-latest}"
+          input_value() {
+            jq -r --arg key "$1" '.inputs[$key] // ""' "$GITHUB_EVENT_PATH"
+          }
+
+          input_package_name="$(input_value package_name)"
+          input_distro_name="$(input_value distro_name)"
+          input_distro_rootfs_url="$(input_value distro_rootfs_url)"
+          input_wsl_arch="$(input_value wsl_arch)"
+          input_release_tag="$(input_value release_tag)"
+
+          package_name="${input_package_name:-wsl2-offline-ubuntu-24.04}"
+          distro_name="${input_distro_name:-Ubuntu-24.04}"
+          distro_rootfs_url="${input_distro_rootfs_url:-https://cloud-images.ubuntu.com/wsl/releases/24.04/current/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz}"
+          wsl_arch="${input_wsl_arch:-x64}"
+          release_tag="${input_release_tag:-wsl2-offline-latest}"
 
           {
             echo "package_name=$package_name"
