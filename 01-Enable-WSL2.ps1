@@ -27,8 +27,25 @@ function Enable-WslOptionalFeature {
     return [bool]$result.RestartNeeded
 }
 
+function Assert-VirtualizationFirmwareEnabled {
+    $processors = @(Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue)
+    if ($processors.Count -eq 0) {
+        Write-Warning "Unable to determine CPU virtualization firmware status."
+        return
+    }
+
+    $disabledProcessors = @($processors | Where-Object { -not $_.VirtualizationFirmwareEnabled })
+    if ($disabledProcessors.Count -gt 0) {
+        Write-Error "CPU virtualization is disabled in firmware. Enable Intel VT-x or AMD-V in BIOS/UEFI before installing WSL 2."
+        exit 1
+    }
+
+    Write-Host "CPU virtualization is enabled in firmware."
+}
+
 $os = Get-CimInstance -ClassName Win32_OperatingSystem
 Write-Host "Detected OS: $($os.Caption) $($os.Version)"
+Assert-VirtualizationFirmwareEnabled
 
 $restartNeeded = $false
 $features = @(
@@ -54,10 +71,6 @@ try {
     Write-Warning "Unable to set hypervisor launch type automatically: $($_.Exception.Message)"
 }
 
-$processors = @(Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue)
-if ($processors.Count -gt 0 -and ($processors | Where-Object { -not $_.VirtualizationFirmwareEnabled })) {
-    Write-Warning "CPU virtualization appears to be disabled in firmware. Enable it in BIOS/UEFI before using WSL 2."
-}
 
 if ($restartNeeded) {
     Write-Host ""
