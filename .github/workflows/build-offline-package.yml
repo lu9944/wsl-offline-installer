@@ -46,11 +46,11 @@ jobs:
         id: meta
         shell: bash
         env:
-          INPUT_PACKAGE_NAME: ${{ inputs.package_name }}
-          INPUT_DISTRO_NAME: ${{ inputs.distro_name }}
-          INPUT_DISTRO_ROOTFS_URL: ${{ inputs.distro_rootfs_url }}
-          INPUT_WSL_ARCH: ${{ inputs.wsl_arch }}
-          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_PACKAGE_NAME: ${{ github.event.inputs.package_name }}
+          INPUT_DISTRO_NAME: ${{ github.event.inputs.distro_name }}
+          INPUT_DISTRO_ROOTFS_URL: ${{ github.event.inputs.distro_rootfs_url }}
+          INPUT_WSL_ARCH: ${{ github.event.inputs.wsl_arch }}
+          INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag }}
         run: |
           set -euo pipefail
 
