@@ -1,6 +1,9 @@
 name: Build offline WSL2 package
 
-on:
+"on":
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       package_name:
