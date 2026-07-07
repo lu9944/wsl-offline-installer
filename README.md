@@ -12,25 +12,15 @@ The generated zip contains:
 
 The workflow is defined in `.github/workflows/build-offline-package.yml`.
 
-Manual build:
+Manual release build:
 
 1. Open **Actions**.
 2. Run **Build offline WSL2 package**.
-3. Download the generated artifact.
+3. The workflow downloads the WSL installer and Linux rootfs, builds the zip, uploads it as a workflow artifact, then creates or updates a GitHub Release.
 
-Release build:
+By default, the Release tag is `wsl2-offline-latest`. Each run updates that tag to the current commit and replaces the release asset with the newest zip.
 
-1. Create or publish a GitHub Release.
-2. The workflow runs on the `release.published` event.
-3. The generated zip is uploaded to that release.
-
-Manual release upload:
-
-1. Run the workflow manually.
-2. Set `release_tag` to an existing release tag.
-3. The generated zip is uploaded to that release.
-
-The default package uses Ubuntu 24.04 x64. Workflow inputs can override the distro name, rootfs URL, package name, and WSL architecture.
+The default package uses Ubuntu 24.04 x64. Workflow inputs can override the distro name, rootfs URL, package name, WSL architecture, and release tag.
 
 ## Offline Install
 

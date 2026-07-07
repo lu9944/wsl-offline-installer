@@ -24,12 +24,9 @@ on:
           - arm64
         default: x64
       release_tag:
-        description: Optional existing release tag to upload the zip to
-        required: false
-        default: ""
-  release:
-    types:
-      - published
+        description: Release tag to create or update
+        required: true
+        default: wsl2-offline-latest
 
 permissions:
   contents: write
@@ -51,7 +48,6 @@ jobs:
           INPUT_DISTRO_ROOTFS_URL: ${{ inputs.distro_rootfs_url }}
           INPUT_WSL_ARCH: ${{ inputs.wsl_arch }}
           INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
 
@@ -59,7 +55,7 @@ jobs:
           distro_name="${INPUT_DISTRO_NAME:-Ubuntu-24.04}"
           distro_rootfs_url="${INPUT_DISTRO_ROOTFS_URL:-https://cloud-images.ubuntu.com/wsl/releases/24.04/current/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz}"
           wsl_arch="${INPUT_WSL_ARCH:-x64}"
-          release_tag="${RELEASE_TAG:-${INPUT_RELEASE_TAG:-}}"
+          release_tag="${INPUT_RELEASE_TAG:-wsl2-offline-latest}"
 
           {
             echo "package_name=$package_name"
@@ -212,13 +208,54 @@ jobs:
           path: dist/${{ steps.meta.outputs.package_name }}.zip
           if-no-files-found: error
 
-      - name: Upload release asset
-        if: steps.meta.outputs.release_tag != ''
+      - name: Publish release
         shell: bash
         env:
           PACKAGE_NAME: ${{ steps.meta.outputs.package_name }}
+          DISTRO_NAME: ${{ steps.meta.outputs.distro_name }}
           RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+
+          release_title="WSL2 offline installer - $DISTRO_NAME"
+          release_notes_file="dist/release-notes.md"
+
+          cat > "$release_notes_file" <<EOF
+# WSL2 offline installer
+
+Package: $PACKAGE_NAME.zip
+Distro: $DISTRO_NAME
+Source commit: $GITHUB_SHA
+Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+Download the zip asset, extract it on the offline Windows machine, run 01-Enable-WSL2.ps1 as Administrator, restart if requested, then run 02-Install-WSL2-And-Distro.ps1.
+EOF
+
+          if [ "$RELEASE_TAG" = "wsl2-offline-latest" ]; then
+            git tag -f "$RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$RELEASE_TAG" --force
+            tag_is_ready=true
+          else
+            tag_is_ready=false
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "$release_title" \
+              --notes-file "$release_notes_file" \
+              --latest
+          elif [ "$tag_is_ready" = "true" ]; then
+            gh release create "$RELEASE_TAG" \
+              --title "$release_title" \
+              --notes-file "$release_notes_file" \
+              --latest
+          else
+            gh release create "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --title "$release_title" \
+              --notes-file "$release_notes_file" \
+              --latest
+          fi
+
           gh release upload "$RELEASE_TAG" "dist/$PACKAGE_NAME.zip" --clobber
