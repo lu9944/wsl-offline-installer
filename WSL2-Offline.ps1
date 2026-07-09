@@ -225,6 +225,82 @@ function Select-InstallLocation {
     }
 }
 
+function Set-UbuntuProfileAlias {
+    param([string]$DistroName)
+
+    $profilePath = $PROFILE.CurrentUserCurrentHost
+    $profileDir = Split-Path -Parent $profilePath
+    if (-not (Test-Path $profileDir)) {
+        New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+    }
+    if (-not (Test-Path $profilePath)) {
+        New-Item -ItemType File -Path $profilePath -Force | Out-Null
+    }
+
+    $marker = "# WSL2-Offline: ubuntu alias"
+    $existing = Get-Content $profilePath -Raw -ErrorAction SilentlyContinue
+    if ($existing -and $existing.Contains($marker)) {
+        Write-Host "  PowerShell 配置文件中已存在别名，已更新。" -ForegroundColor Gray
+        $newContent = $existing -replace "(?ms)# WSL2-Offline: ubuntu alias.*$", "$marker`nfunction ubuntu { wsl -d $DistroName `$args }"
+        Set-Content -Path $profilePath -Value $newContent -Encoding UTF8
+    } else {
+        $line = "`n$marker`nfunction ubuntu { wsl -d $DistroName `$args }`n"
+        Add-Content -Path $profilePath -Value $line -Encoding UTF8
+    }
+
+    Write-Host "  已添加到: $profilePath" -ForegroundColor Green
+    Write-Host "  重新打开 PowerShell 后，输入 'ubuntu' 即可启动 $DistroName。" -ForegroundColor Green
+}
+
+function Resolve-UbuntuCommandConflict {
+    param([string]$DistroName)
+
+    $ubuntuCmd = Get-Command ubuntu -ErrorAction SilentlyContinue
+    if (-not $ubuntuCmd) { return }
+
+    Write-Host ""
+    Write-Host "检测到 'ubuntu' 命令来自 Store 应用 ($($ubuntuCmd.Source))。" -ForegroundColor Yellow
+    Write-Host "直接运行 'ubuntu' 会安装新的 Store 版 Ubuntu，与离线安装的 '$DistroName' 冲突。" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  [1] 创建 PowerShell 别名 (推荐) — 使 'ubuntu' 直接启动 $DistroName"
+    Write-Host "  [2] 别名 + 移除 Store 版 Ubuntu 应用 (彻底消除冲突)"
+    Write-Host "  [3] 跳过"
+    Write-Host ""
+
+    while ($true) {
+        $choice = (Read-Host "请选择 [1-3]").Trim()
+        switch ($choice) {
+            "1" {
+                Set-UbuntuProfileAlias -DistroName $DistroName
+                return
+            }
+            "2" {
+                Set-UbuntuProfileAlias -DistroName $DistroName
+                Write-Host ""
+                Write-Host "正在移除 Store 版 Ubuntu 应用..." -ForegroundColor Cyan
+                $ubuntuAppx = @(Get-AppxPackage -AllUsers -Name "CanonicalGroupLimited.Ubuntu*" -ErrorAction SilentlyContinue)
+                foreach ($pkg in $ubuntuAppx) {
+                    Write-Host "  移除: $($pkg.PackageFullName)"
+                    Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+                }
+                if ($ubuntuAppx.Count -eq 0) {
+                    Write-Host "  未找到 Store 版 Ubuntu Appx 包。" -ForegroundColor Gray
+                } else {
+                    Write-Host "  Store 版 Ubuntu 应用已移除。" -ForegroundColor Green
+                }
+                return
+            }
+            "3" {
+                Write-Host "已跳过。请使用 'wsl -d $DistroName' 启动 Linux。" -ForegroundColor Gray
+                return
+            }
+            default {
+                Write-Host "  无效选择，请输入 1-3" -ForegroundColor Red
+            }
+        }
+    }
+}
+
 function Invoke-WslInstall {
     Write-Host ""
     Write-Host "========== 开始安装 WSL2 ==========" -ForegroundColor Cyan
@@ -412,6 +488,9 @@ function Invoke-WslInstall {
     Write-Host ""
     Write-Host "========== 安装完成 ==========" -ForegroundColor Green
     Write-Host "使用以下命令启动 Linux: wsl -d $DistroName" -ForegroundColor Green
+
+    # --- 检测 ubuntu 命令冲突 ---
+    Resolve-UbuntuCommandConflict -DistroName $DistroName
 }
 
 # ==================================================================
