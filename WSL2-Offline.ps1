@@ -426,6 +426,9 @@ function Invoke-WslUninstall {
 
     $restartNeeded = $false
     $wslExe = Get-WslExePath
+    if ($wslExe -and -not (Test-WslFeaturesEnabled)) {
+        $wslExe = $null
+    }
 
     # --- 阶段 1: 关闭 WSL ---
     if ($wslExe) {
@@ -595,24 +598,39 @@ function Invoke-EnvironmentCheck {
 
     # wsl.exe & 发行版
     $wslExe = Get-WslExePath
-    if ($wslExe) {
-        $wslVersion = (& $wslExe --version 2>$null | Select-Object -First 1)
-        $wslVersion = ($wslVersion -replace "`0","").Trim()
-        if ($wslVersion) {
-            Write-Host "[WSL版本]    $wslVersion" -ForegroundColor Green
-        } else {
-            Write-Host "[WSL版本]    wsl.exe 存在但无法获取版本 (可能需要重启)" -ForegroundColor Yellow
-        }
+    $featuresReady = ($wslState -eq "Enabled" -and $vmState -eq "Enabled")
+    $distros = @()
 
-        $distros = @(Get-InstalledDistroNames -WslExe $wslExe)
-        if ($distros.Count -gt 0) {
-            Write-Host "[已装发行版] $($distros.Count) 个:" -ForegroundColor Green
-            foreach ($d in $distros) { Write-Host "               - $d" }
-        } else {
-            Write-Host "[已装发行版] 无"
+    if ($wslExe -and $featuresReady) {
+        $oldEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $rawVersion = & $wslExe --version 2>$null
+            $wslVersion = (($rawVersion | Select-Object -First 1) -replace "`0","").Trim()
+            if ($wslVersion) {
+                Write-Host "[WSL版本]    $wslVersion" -ForegroundColor Green
+            } else {
+                Write-Host "[WSL版本]    wsl.exe 存在但无法获取版本 (可能需要重启)" -ForegroundColor Yellow
+            }
+            $distros = @(Get-InstalledDistroNames -WslExe $wslExe)
+            if ($distros.Count -gt 0) {
+                Write-Host "[已装发行版] $($distros.Count) 个:" -ForegroundColor Green
+                foreach ($d in $distros) { Write-Host "               - $d" }
+            } else {
+                Write-Host "[已装发行版] 无"
+            }
+        } catch {
+            Write-Host "[WSL版本]    wsl.exe 存在但无法正常运行" -ForegroundColor Yellow
+            Write-Host "[已装发行版] 无法读取" -ForegroundColor Gray
+        } finally {
+            $ErrorActionPreference = $oldEAP
         }
+    } elseif ($wslExe) {
+        Write-Host "[wsl.exe]    存在但 WSL 功能未启用，跳过检测" -ForegroundColor Gray
+        Write-Host "[已装发行版] 无法读取 (WSL 功能未启用)" -ForegroundColor Gray
     } else {
         Write-Host "[wsl.exe]    未找到 (WSL 功能可能未启用或未重启)" -ForegroundColor Gray
+        Write-Host "[已装发行版] 无法读取" -ForegroundColor Gray
     }
 
     # 离线安装包
