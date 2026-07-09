@@ -252,6 +252,76 @@ function Set-UbuntuProfileAlias {
     Write-Host "  重新打开 PowerShell 后，输入 'ubuntu' 即可启动 $DistroName。" -ForegroundColor Green
 }
 
+function Invoke-NewUserSetup {
+    param(
+        [string]$DistroName,
+        [string]$WslExe
+    )
+
+    Write-Host ""
+    Write-Host "---------- 创建普通用户 ----------" -ForegroundColor Cyan
+    Write-Host "当前默认用户为 root，是否创建一个普通用户?" -ForegroundColor Yellow
+    Write-Host "(类似商店版 Ubuntu 的首次启动设置，创建后将成为默认用户)" -ForegroundColor Gray
+
+    $choice = (Read-Host "创建用户? [Y/n]").Trim()
+    if ($choice -in @("n","N","no","No")) {
+        Write-Host "已跳过，将以 root 用户启动。" -ForegroundColor Gray
+        return
+    }
+
+    while ($true) {
+        $userName = (Read-Host "请输入用户名 (小写字母开头, 可含数字和连字符)").Trim()
+        if ($userName -match '^[a-z][a-z0-9_-]*$') { break }
+        Write-Host "  用户名无效，请重新输入。" -ForegroundColor Red
+    }
+
+    $savedEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
+    $escUser = $userName -replace "'", "'\''"
+    $createUserCmd = @"
+id '$escUser' >/dev/null 2>&1 || useradd -m -s /bin/bash -G sudo '$escUser'
+mkdir -p /home/$userName
+chown $userName:$userName /home/$userName
+echo '$escUser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/$userName
+chmod 440 /etc/sudoers.d/$userName
+"@
+
+    Write-Host "正在创建用户 '$userName'..." -ForegroundColor Cyan
+    & $WslExe -d $DistroName -u root -- bash -c $createUserCmd 2>$null
+
+    Write-Host "请设置用户密码:" -ForegroundColor Cyan
+    while ($true) {
+        $password = Read-Host "密码" -AsSecureString
+        $password2 = Read-Host "确认密码" -AsSecureString
+        $plain1 = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))
+        $plain2 = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password2))
+        if ($plain1 -eq $plain2 -and $plain1.Length -gt 0) { break }
+        Write-Host "  密码不匹配或为空，请重试。" -ForegroundColor Red
+    }
+
+    $escPass = $plain1 -replace "'", "'\''"
+    & $WslExe -d $DistroName -u root -- bash -c "echo '$escUser:$escPass' | chpasswd" 2>$null
+    $plain1 = $null
+    $plain2 = $null
+
+    # 设置默认用户
+    $wslConfCmd = @"
+cat > /etc/wsl.conf << 'WSLCONFEOF'
+[user]
+default=$userName
+WSLCONFEOF
+"@
+    & $WslExe -d $DistroName -u root -- bash -c $wslConfCmd 2>$null
+
+    $ErrorActionPreference = $savedEAP
+
+    Write-Host "用户 '$userName' 已创建并设为默认用户。" -ForegroundColor Green
+    Write-Host "已授予 sudo 免密权限。" -ForegroundColor Green
+}
+
 function Resolve-UbuntuCommandConflict {
     param([string]$DistroName)
 
@@ -492,6 +562,10 @@ function Invoke-WslInstall {
     }
 
     & $wslExe --set-default $DistroName 2>$null
+
+    # --- 创建普通用户 ---
+    Invoke-NewUserSetup -DistroName $DistroName -WslExe $wslExe
+
     & $wslExe --shutdown 2>$null
 
     Write-Host ""
