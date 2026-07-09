@@ -521,21 +521,21 @@ function Invoke-WslUninstall {
 
     # --- 阶段 1: 关闭 WSL ---
     if ($wslExe) {
-        Write-Host "[1/7] 正在关闭 WSL..."
+        Write-Host "[1/8] 正在关闭 WSL..."
         & $wslExe --shutdown 2>$null
         Start-Sleep -Seconds 2
     } else {
-        Write-Host "[1/7] wsl.exe 不存在，跳过关闭。" -ForegroundColor Gray
+        Write-Host "[1/8] wsl.exe 不存在，跳过关闭。" -ForegroundColor Gray
     }
 
     # --- 阶段 2: 正常注销发行版 ---
     $distros = @(Get-InstalledDistroNames -WslExe $wslExe)
     $failedDistros = @()
     if ($distros.Count -eq 0) {
-        Write-Host "[2/7] 无已安装发行版，跳过注销。" -ForegroundColor Gray
+        Write-Host "[2/8] 无已安装发行版，跳过注销。" -ForegroundColor Gray
     } else {
         foreach ($distro in $distros) {
-            Write-Host "[2/7] 正在注销发行版: $distro"
+            Write-Host "[2/8] 正在注销发行版: $distro"
             & $wslExe --unregister $distro 2>$null
             if ($LASTEXITCODE -ne 0) { $failedDistros += $distro }
         }
@@ -543,7 +543,7 @@ function Invoke-WslUninstall {
 
     # --- 阶段 3: 重启 LxssManager 后重试 ---
     if ($failedDistros.Count -gt 0 -and $wslExe) {
-        Write-Host "[3/7] 部分发行版无法注销。正在重启 LxssManager 服务并重试..." -ForegroundColor Yellow
+        Write-Host "[3/8] 部分发行版无法注销。正在重启 LxssManager 服务并重试..." -ForegroundColor Yellow
         try {
             Restart-Service LxssManager -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 3
@@ -554,48 +554,54 @@ function Invoke-WslUninstall {
         Start-Sleep -Seconds 1
         $stillFailed = @()
         foreach ($distro in $failedDistros) {
-            Write-Host "[3/7] 重试注销: $distro"
+            Write-Host "[3/8] 重试注销: $distro"
             & $wslExe --unregister $distro 2>$null
             if ($LASTEXITCODE -ne 0) { $stillFailed += $distro }
         }
         $failedDistros = $stillFailed
     } elseif ($failedDistros.Count -eq 0) {
-        Write-Host "[3/7] 无需重试。" -ForegroundColor Gray
+        Write-Host "[3/8] 无需重试。" -ForegroundColor Gray
     }
 
     # --- 阶段 4: 强制清理 ---
     if ($failedDistros.Count -gt 0) {
-        Write-Host "[4/7] $($failedDistros.Count) 个发行版无法通过 wsl --unregister 注销。" -ForegroundColor Yellow
+        Write-Host "[4/8] $($failedDistros.Count) 个发行版无法通过 wsl --unregister 注销。" -ForegroundColor Yellow
         Write-Host "      正在通过注册表 + Appx 移除进行强制清理..." -ForegroundColor Yellow
         Invoke-ForceDistroCleanup
         Remove-RemainingDistroAppx
-        Write-Host "[4/7] 强制清理完成。" -ForegroundColor Green
+        Write-Host "[4/8] 强制清理完成。" -ForegroundColor Green
     } else {
-        Write-Host "[4/7] 无需强制清理。" -ForegroundColor Gray
+        Write-Host "[4/8] 无需强制清理。" -ForegroundColor Gray
     }
 
     # --- 阶段 5: 移除 WSL 框架 Appx ---
     $foundAppx = $false
+    $wslAppxPatterns = @(
+        "MicrosoftCorporationII.WindowsSubsystemForLinux",
+        "Microsoft.WSL"
+    )
     try {
-        $appxPackages = @(Get-AppxPackage -AllUsers -Name "MicrosoftCorporationII.WindowsSubsystemForLinux" -ErrorAction SilentlyContinue)
-        foreach ($package in $appxPackages) {
-            $foundAppx = $true
-            Write-Host "[5/7] 正在移除 Appx 包: $($package.PackageFullName)"
-            Remove-AppxPackage -Package $package.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+        foreach ($pattern in $wslAppxPatterns) {
+            $appxPackages = @(Get-AppxPackage -AllUsers -Name $pattern -ErrorAction SilentlyContinue)
+            foreach ($package in $appxPackages) {
+                $foundAppx = $true
+                Write-Host "[5/8] 正在移除 Appx 包: $($package.PackageFullName)"
+                Remove-AppxPackage -Package $package.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+            }
         }
         $provisionedPackages = @(Get-AppxProvisionedPackage -Online | Where-Object {
-            $_.DisplayName -eq "MicrosoftCorporationII.WindowsSubsystemForLinux"
+            $_.DisplayName -in $wslAppxPatterns
         })
         foreach ($package in $provisionedPackages) {
             $foundAppx = $true
-            Write-Host "[5/7] 正在移除预配包: $($package.PackageName)"
+            Write-Host "[5/8] 正在移除预配包: $($package.PackageName)"
             Remove-AppxProvisionedPackage -Online -PackageName $package.PackageName | Out-Null
         }
     } catch {
-        Write-Warning "[5/7] 无法自动移除 WSL Appx 包: $($_.Exception.Message)"
+        Write-Warning "[5/8] 无法自动移除 WSL Appx 包: $($_.Exception.Message)"
     }
     if (-not $foundAppx) {
-        Write-Host "[5/7] 未找到 WSL 框架 Appx 包，跳过。" -ForegroundColor Gray
+        Write-Host "[5/8] 未找到 WSL 框架 Appx 包，跳过。" -ForegroundColor Gray
     }
 
     # --- 阶段 6: 卸载 WSL MSI ---
@@ -606,20 +612,21 @@ function Invoke-WslUninstall {
     )
     foreach ($root in $roots) {
         $msiEntries += @(Get-ItemProperty -Path $root -ErrorAction SilentlyContinue | Where-Object {
-            $_.DisplayName -like "*Windows Subsystem for Linux*"
+            $_.DisplayName -like "*Windows Subsystem for Linux*" -or
+            $_.DisplayName -like "*WSL*"
         })
     }
     if ($msiEntries.Count -eq 0) {
-        Write-Host "[6/7] 未找到 WSL MSI 包，跳过。" -ForegroundColor Gray
+        Write-Host "[6/8] 未找到 WSL MSI 包，跳过。" -ForegroundColor Gray
     } else {
         foreach ($entry in $msiEntries) {
             $uninstallString = [string]$entry.UninstallString
             if ($uninstallString -match "\{[0-9A-Fa-f-]{36}\}") {
                 $productCode = $Matches[0]
-                Write-Host "[6/7] 正在卸载 MSI 包: $($entry.DisplayName)"
+                Write-Host "[6/8] 正在卸载 MSI 包: $($entry.DisplayName)"
                 $process = Start-Process -FilePath "msiexec.exe" -ArgumentList @("/x",$productCode,"/passive","/norestart") -Wait -PassThru
                 if ($process.ExitCode -notin @(0,1605,3010)) {
-                    Write-Warning "[6/7] MSI 卸载返回退出码 $($process.ExitCode)。"
+                    Write-Warning "[6/8] MSI 卸载返回退出码 $($process.ExitCode)。"
                 }
             }
         }
@@ -629,12 +636,30 @@ function Invoke-WslUninstall {
     foreach ($featureName in @("VirtualMachinePlatform","Microsoft-Windows-Subsystem-Linux")) {
         $feature = Get-WindowsOptionalFeature -Online -FeatureName $featureName -ErrorAction SilentlyContinue
         if ($null -eq $feature -or $feature.State -ne "Enabled") {
-            Write-Host "[7/7] 功能未启用，跳过: $featureName" -ForegroundColor Gray
+            Write-Host "[7/8] 功能未启用，跳过: $featureName" -ForegroundColor Gray
             continue
         }
-        Write-Host "[7/7] 正在禁用功能: $featureName"
+        Write-Host "[7/8] 正在禁用功能: $featureName"
         $result = Disable-WindowsOptionalFeature -Online -FeatureName $featureName -NoRestart
         if ($result.RestartNeeded) { $restartNeeded = $true }
+    }
+
+    # --- 阶段 8: 清理残留数据目录 ---
+    $cleanedData = $false
+    $dataPatterns = @(
+        "$env:LOCALAPPDATA\Packages\MicrosoftCorporationII.WindowsSubsystemForLinux*",
+        "$env:LOCALAPPDATA\Packages\Microsoft.WSL*"
+    )
+    foreach ($pattern in $dataPatterns) {
+        $dirs = @(Get-Item $pattern -ErrorAction SilentlyContinue)
+        foreach ($dir in $dirs) {
+            $cleanedData = $true
+            Write-Host "[8/8] 正在移除数据目录: $($dir.FullName)"
+            Remove-Item -Path $dir.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    if (-not $cleanedData) {
+        Write-Host "[8/8] 无残留数据目录，跳过。" -ForegroundColor Gray
     }
 
     # --- 结果 ---
