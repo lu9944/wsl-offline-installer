@@ -117,6 +117,47 @@ function Test-WslFeaturesEnabled {
             $vmFeature  -and $vmFeature.State  -eq "Enabled")
 }
 
+function Force-RemoveDistroByName {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [string]$WslExe
+    )
+
+    # 尝试重启 LxssManager 后重试一次
+    if ($WslExe) {
+        try {
+            Restart-Service LxssManager -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+        } catch {}
+        & $WslExe --unregister $Name 2>$null
+        if ($LASTEXITCODE -eq 0) { return }
+    }
+
+    # 通过注册表强制清理
+    $lxssRoot = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss"
+    if (-not (Test-Path $lxssRoot)) { return }
+
+    foreach ($key in (Get-ChildItem $lxssRoot -ErrorAction SilentlyContinue)) {
+        $props = Get-ItemProperty -Path $key.PSPath -ErrorAction SilentlyContinue
+        if ($props.DistributionName -eq $Name) {
+            Write-Host "  正在移除注册表项和 Appx 包..." -ForegroundColor Gray
+            if ($props.PackageFamilyName) {
+                $pkgs = @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | Where-Object {
+                    $_.PackageFamilyName -eq $props.PackageFamilyName
+                })
+                foreach ($pkg in $pkgs) {
+                    Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+                }
+            }
+            Remove-Item -Path $key.PSPath -Recurse -Force -ErrorAction SilentlyContinue
+            if ($props.BasePath -and (Test-Path $props.BasePath)) {
+                Write-Host "  正在移除数据目录: $($props.BasePath)" -ForegroundColor Gray
+                Remove-Item -Path $props.BasePath -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 function Install-WslPackage {
     param([Parameter(Mandatory = $true)][string]$Path)
     $extension = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
@@ -270,20 +311,68 @@ function Invoke-WslInstall {
 
     & $wslExe --set-default-version 2 2>$null
 
-    # --- 检查同名发行版 ---
+    # --- 检查已有发行版 ---
+    $oldEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
     $existingDistros = @(Get-InstalledDistroNames -WslExe $wslExe)
+
+    if ($existingDistros.Count -gt 0) {
+        Write-Host ""
+        Write-Host "检测到以下已安装的发行版:" -ForegroundColor Yellow
+        foreach ($d in $existingDistros) {
+            $tag = if ($d -eq $DistroName) { " (目标)" }
+                   elseif ($d -like "docker*") { " (Docker Desktop)" }
+                   else { "" }
+            Write-Host "  - $d $tag" -ForegroundColor Gray
+        }
+
+        # 提示清理其他发行版
+        $otherDistros = @($existingDistros | Where-Object { $_ -ne $DistroName })
+        if ($otherDistros.Count -gt 0) {
+            Write-Host ""
+            $cleanOthers = (Read-Host "是否清理以上其他发行版? [y/N]").Trim()
+            if ($cleanOthers -in @("y","Y","yes","Yes")) {
+                foreach ($d in $otherDistros) {
+                    Write-Host "正在注销: $d"
+                    & $wslExe --unregister $d 2>$null
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Host "  正常注销失败，尝试强制清理..." -ForegroundColor Yellow
+                        Force-RemoveDistroByName -Name $d -WslExe $wslExe
+                    }
+                }
+            }
+        }
+    }
+
+    # 处理目标发行版
     if ($existingDistros -contains $DistroName) {
-        if (-not $Force) {
-            Write-Host "发行版 '$DistroName' 已安装。使用 -Force 参数可注销并重新导入。" -ForegroundColor Yellow
+        $shouldOverwrite = $Force
+        if (-not $shouldOverwrite) {
+            Write-Host ""
+            $answer = (Read-Host "'$DistroName' 已存在，是否覆盖安装? [y/N]").Trim()
+            $shouldOverwrite = ($answer -in @("y","Y","yes","Yes"))
+        }
+
+        if ($shouldOverwrite) {
+            Write-Host "正在注销: $DistroName"
+            & $wslExe --unregister $DistroName 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "正常注销失败，尝试强制清理..." -ForegroundColor Yellow
+                Force-RemoveDistroByName -Name $DistroName -WslExe $wslExe
+            }
+        } else {
+            Write-Host "保留现有的 '$DistroName'，仅设置为默认。" -ForegroundColor Yellow
             & $wslExe --set-version $DistroName 2 2>$null
             & $wslExe --set-default $DistroName 2>$null
+            $ErrorActionPreference = $oldEAP
             Write-Host ""
             Write-Host "安装完成。使用以下命令启动 Linux: wsl -d $DistroName" -ForegroundColor Green
             return
         }
-        Write-Host "正在注销已存在的发行版: $DistroName"
-        & $wslExe --unregister $DistroName 2>$null
     }
+
+    $ErrorActionPreference = $oldEAP
 
     # --- 选择安装位置 ---
     $resolvedRoot = Select-InstallLocation -Preset $InstallRoot
