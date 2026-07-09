@@ -83,10 +83,7 @@ jobs:
           package_dir="dist/package/$PACKAGE_NAME"
           mkdir -p "$package_dir/packages" "$package_dir/images"
 
-          install -m 0644 01-Enable-WSL2.ps1 "$package_dir/"
-          install -m 0644 02-Install-WSL2-And-Distro.ps1 "$package_dir/"
-          install -m 0644 Uninstall-WSL2.ps1 "$package_dir/"
-          install -m 0644 WSL-Offline-Install.ps1 "$package_dir/"
+          install -m 0644 WSL2-Offline.ps1 "$package_dir/"
           install -m 0644 LICENSE "$package_dir/"
           install -m 0644 README.md "$package_dir/"
 
@@ -236,7 +233,7 @@ jobs:
           Source commit: $GITHUB_SHA
           Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
 
-          Download the zip asset, extract it on the offline Windows machine, run 01-Enable-WSL2.ps1 as Administrator, restart if requested, then run 02-Install-WSL2-And-Distro.ps1.
+          Download the zip asset, extract it on the offline Windows machine, run WSL2-Offline.ps1 as Administrator and select "Install".
           EOF
 
           if [ "$RELEASE_TAG" = "wsl2-offline-latest" ]; then

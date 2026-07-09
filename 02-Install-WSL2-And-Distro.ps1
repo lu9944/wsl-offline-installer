@@ -1,7 +1,7 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$DistroName = "Ubuntu-24.04",
-    [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA "WSL"),
+    [string]$InstallRoot,
     [string]$ImagePath,
     [string]$WslInstallerPath,
     [switch]$Force
@@ -39,7 +39,7 @@ function Resolve-PackageFile {
 
     $matches = @($matches | Sort-Object -Property LastWriteTimeUtc -Descending)
     if ($matches.Count -eq 0) {
-        throw "Cannot find $Description. Expected one of: $($Patterns -join ', ')"
+        throw "找不到 $Description。预期路径之一: $($Patterns -join ', ')"
     }
 
     return $matches[0].FullName
@@ -56,7 +56,7 @@ function Get-WslExePath {
         return $sysnative
     }
 
-    throw "wsl.exe was not found. Run 01-Enable-WSL2.ps1 first and restart Windows if requested."
+    throw "未找到 wsl.exe。请先运行 01-Enable-WSL2.ps1，如提示重启请先重启。"
 }
 
 function Install-WslPackage {
@@ -69,7 +69,7 @@ function Install-WslPackage {
 
     switch ($extension) {
         ".msi" {
-            Write-Host "Installing WSL package: $Path"
+            Write-Host "正在安装 WSL 包: $Path"
             $arguments = @("/i", "`"$Path`"", "/passive", "/norestart")
             if (Test-IsAdministrator) {
                 $process = Start-Process -FilePath "msiexec.exe" -ArgumentList $arguments -Wait -PassThru
@@ -78,19 +78,19 @@ function Install-WslPackage {
             }
 
             if ($process.ExitCode -notin @(0, 3010)) {
-                throw "WSL MSI installer failed with exit code $($process.ExitCode)."
+                throw "WSL MSI 安装程序失败，退出码 $($process.ExitCode)。"
             }
         }
         ".msixbundle" {
-            Write-Host "Installing WSL package: $Path"
+            Write-Host "正在安装 WSL 包: $Path"
             Add-AppxPackage -Path $Path -ForceApplicationShutdown
         }
         ".appxbundle" {
-            Write-Host "Installing WSL package: $Path"
+            Write-Host "正在安装 WSL 包: $Path"
             Add-AppxPackage -Path $Path -ForceApplicationShutdown
         }
         default {
-            throw "Unsupported WSL installer extension: $extension"
+            throw "不支持的 WSL 安装包格式: $extension"
         }
     }
 }
@@ -112,7 +112,7 @@ function Expand-GzipImage {
         Remove-Item -Path $targetPath -Force
     }
 
-    Write-Host "Expanding gzip image to temporary tar: $targetPath"
+    Write-Host "正在解压 gzip 镜像到临时 tar 文件: $targetPath"
     $inputStream = [System.IO.File]::OpenRead($Path)
     try {
         $gzipStream = [System.IO.Compression.GzipStream]::new($inputStream, [System.IO.Compression.CompressionMode]::Decompress)
@@ -140,13 +140,31 @@ function Get-InstalledDistroNames {
     )
 
     $output = @(& $WslExe --list --quiet 2>$null)
-    return @($output | ForEach-Object { $_.Trim([char]0x00).Trim() } | Where-Object { $_ })
+    return @($output | ForEach-Object {
+        ($_ -replace "`0", "").Trim()
+    } | Where-Object { $_ })
+}
+
+function Get-DiskFreeGB {
+    param([string]$Path)
+
+    try {
+        $qualified = Split-Path -Qualifier $Path -ErrorAction SilentlyContinue
+        if (-not $qualified) { return $null }
+        $driveName = $qualified -replace '[:\\]', ''
+        $psd = Get-PSDrive -Name $driveName -ErrorAction SilentlyContinue
+        if ($psd -and $psd.Free) {
+            return [math]::Round($psd.Free / 1GB, 1)
+        }
+    } catch {}
+
+    return $null
 }
 
 $scriptRoot = Get-ScriptRoot
 
 if (-not $WslInstallerPath) {
-    $WslInstallerPath = Resolve-PackageFile -Description "WSL installer package" -Patterns @(
+    $WslInstallerPath = Resolve-PackageFile -Description "WSL 安装包" -Patterns @(
         (Join-Path $scriptRoot "packages\wsl*.msi"),
         (Join-Path $scriptRoot "packages\Microsoft.WSL*.msixbundle"),
         (Join-Path $scriptRoot "packages\*.msixbundle"),
@@ -155,7 +173,7 @@ if (-not $WslInstallerPath) {
 }
 
 if (-not $ImagePath) {
-    $ImagePath = Resolve-PackageFile -Description "Linux rootfs image" -Patterns @(
+    $ImagePath = Resolve-PackageFile -Description "Linux rootfs 镜像" -Patterns @(
         (Join-Path $scriptRoot "images\*.rootfs.tar"),
         (Join-Path $scriptRoot "images\*.rootfs.tar.gz"),
         (Join-Path $scriptRoot "images\*.tar"),
@@ -168,23 +186,83 @@ Install-WslPackage -Path $WslInstallerPath
 $wslExe = Get-WslExePath
 & $wslExe --set-default-version 2
 if ($LASTEXITCODE -ne 0) {
-    throw "Unable to set WSL 2 as the default version. Confirm that Step 1 completed and Windows was restarted if required."
+    throw "无法将 WSL 2 设置为默认版本。请确认第一步已完成，并在需要时重启了 Windows。"
 }
 
 $existingDistros = @(Get-InstalledDistroNames -WslExe $wslExe)
 if ($existingDistros -contains $DistroName) {
     if (-not $Force) {
-        Write-Host "Distro '$DistroName' is already installed. Use -Force to unregister and import it again." -ForegroundColor Yellow
+        Write-Host "发行版 '$DistroName' 已安装。使用 -Force 参数可注销并重新导入。" -ForegroundColor Yellow
         & $wslExe --set-version $DistroName 2
         & $wslExe --set-default $DistroName
         exit 0
     }
 
-    Write-Host "Unregistering existing distro: $DistroName"
+    Write-Host "正在注销已存在的发行版: $DistroName"
     & $wslExe --unregister $DistroName
     if ($LASTEXITCODE -ne 0) {
-        throw "Unable to unregister existing distro '$DistroName'."
+        throw "无法注销已存在的发行版 '$DistroName'。"
     }
+}
+
+# === 确定安装位置 ==================================================
+if (-not $InstallRoot) {
+    $defaultRoot = Join-Path $env:LOCALAPPDATA "WSL"
+
+    Write-Host ""
+    Write-Host "选择发行版安装位置" -ForegroundColor Cyan
+    Write-Host "  默认路径: $defaultRoot"
+    $defaultFree = Get-DiskFreeGB -Path $defaultRoot
+    if ($null -ne $defaultFree) {
+        Write-Host "  剩余空间: $defaultFree GB" -ForegroundColor Gray
+    }
+    Write-Host ""
+
+    while ($true) {
+        $userInput = (Read-Host "输入自定义路径，或按回车使用默认路径").Trim()
+
+        if (-not $userInput) {
+            $InstallRoot = $defaultRoot
+            break
+        }
+
+        if ($userInput -notmatch '^[A-Za-z]:[\\/]') {
+            Write-Host "  格式无效，请使用完整路径，例如 D:\WSL" -ForegroundColor Red
+            continue
+        }
+
+        $driveLetter = $userInput[0]
+        $drive = Get-PSDrive -Name $driveLetter -ErrorAction SilentlyContinue
+        if (-not $drive) {
+            Write-Host "  盘符 ${driveLetter}:\ 在此系统上不存在。" -ForegroundColor Red
+            continue
+        }
+
+        try {
+            $testParent = Split-Path -Parent $userInput
+            if (-not $testParent) { $testParent = $userInput }
+            $leaf = Split-Path -Leaf $userInput
+            $probePath = Join-Path $testParent ($leaf + ".wslwriteprobe")
+            New-Item -ItemType Directory -Path $probePath -Force -ErrorAction Stop | Out-Null
+            Remove-Item -Path $probePath -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-Host "  无法在此路径创建目录: $($_.Exception.Message)" -ForegroundColor Red
+            continue
+        }
+
+        $InstallRoot = $userInput
+        break
+    }
+}
+
+$freeGB = Get-DiskFreeGB -Path $InstallRoot
+if ($null -ne $freeGB) {
+    Write-Host "安装位置: $InstallRoot  (剩余 $freeGB GB)" -ForegroundColor Green
+    if ($freeGB -lt 5) {
+        Write-Warning "目标盘空间不足 (剩余 $freeGB GB)。WSL 发行版会快速增大。"
+    }
+} else {
+    Write-Host "安装位置: $InstallRoot" -ForegroundColor Green
 }
 
 $distroInstallPath = Join-Path $InstallRoot $DistroName
@@ -194,10 +272,10 @@ $imageForImport = Expand-GzipImage -Path $ImagePath
 $removeExpandedImage = $imageForImport -ne $ImagePath
 
 try {
-    Write-Host "Importing distro '$DistroName' to $distroInstallPath"
+    Write-Host "正在导入发行版 '$DistroName' 到 $distroInstallPath"
     & $wslExe --import $DistroName $distroInstallPath $imageForImport --version 2
     if ($LASTEXITCODE -ne 0) {
-        throw "WSL import failed with exit code $LASTEXITCODE."
+        throw "WSL 导入失败，退出码 $LASTEXITCODE。"
     }
 } finally {
     if ($removeExpandedImage -and (Test-Path $imageForImport)) {
@@ -209,4 +287,4 @@ try {
 & $wslExe --shutdown
 
 Write-Host ""
-Write-Host "Installation complete. Start Linux with: wsl -d $DistroName" -ForegroundColor Green
+Write-Host "安装完成。使用以下命令启动 Linux: wsl -d $DistroName" -ForegroundColor Green
