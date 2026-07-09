@@ -281,10 +281,10 @@ function Invoke-NewUserSetup {
     $escUser = $userName -replace "'", "'\''"
     $createUserCmd = @"
 id '$escUser' >/dev/null 2>&1 || useradd -m -s /bin/bash -G sudo '$escUser'
-mkdir -p /home/$userName
-chown $userName:$userName /home/$userName
-echo '$escUser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/$userName
-chmod 440 /etc/sudoers.d/$userName
+mkdir -p /home/${userName}
+chown ${userName}:${userName} /home/${userName}
+echo '$escUser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/${userName}
+chmod 440 /etc/sudoers.d/${userName}
 "@
 
     Write-Host "正在创建用户 '$userName'..." -ForegroundColor Cyan
@@ -303,7 +303,7 @@ chmod 440 /etc/sudoers.d/$userName
     }
 
     $escPass = $plain1 -replace "'", "'\''"
-    & $WslExe -d $DistroName -u root -- bash -c "echo '$escUser:$escPass' | chpasswd" 2>$null
+    & $WslExe -d $DistroName -u root -- bash -c "echo '${escUser}:${escPass}' | chpasswd" 2>$null
     $plain1 = $null
     $plain2 = $null
 
