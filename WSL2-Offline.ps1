@@ -782,7 +782,7 @@ function Show-Menu {
     Write-Host "             WSL2 离线安装管理工具" -ForegroundColor Cyan
     Write-Host "=============================================" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  [1] 安装 WSL2  (启用功能 -> 安装内核 -> 导入发行版)"
+    Write-Host "  [1] 安装WSL2 与 Linux子系统  (启用功能 -> 安装内核 -> 导入发行版)"
     Write-Host "  [2] 卸载 WSL2  (注销发行版 -> 移除组件 -> 禁用功能)"
     Write-Host "  [3] 检测环境   (查看当前 WSL 状态和安装包情况)"
     Write-Host ""
