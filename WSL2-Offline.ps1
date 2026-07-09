@@ -519,6 +519,18 @@ function Invoke-WslUninstall {
         $wslExe = $null
     }
 
+    # --- 预先记录所有发行版数据路径（注销前快照） ---
+    $distroDataPaths = @()
+    $lxssRoot = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss"
+    if (Test-Path $lxssRoot) {
+        foreach ($key in (Get-ChildItem $lxssRoot -ErrorAction SilentlyContinue)) {
+            $props = Get-ItemProperty -Path $key.PSPath -ErrorAction SilentlyContinue
+            if ($props.BasePath) {
+                $distroDataPaths += [string]$props.BasePath
+            }
+        }
+    }
+
     # --- 阶段 1: 关闭 WSL ---
     if ($wslExe) {
         Write-Host "[1/8] 正在关闭 WSL..."
@@ -646,6 +658,17 @@ function Invoke-WslUninstall {
 
     # --- 阶段 8: 清理残留数据目录 ---
     $cleanedData = $false
+
+    # 8a: 自定义路径的发行版数据（注销前快照兜底）
+    foreach ($basePath in $distroDataPaths) {
+        if (Test-Path $basePath) {
+            $cleanedData = $true
+            Write-Host "[8/8] 正在移除发行版数据: $basePath"
+            Remove-Item -Path $basePath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # 8b: WSL 框架数据目录
     $dataPatterns = @(
         "$env:LOCALAPPDATA\Packages\MicrosoftCorporationII.WindowsSubsystemForLinux*",
         "$env:LOCALAPPDATA\Packages\Microsoft.WSL*"
