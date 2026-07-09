@@ -642,7 +642,13 @@ function Invoke-WslUninstall {
     if ($restartNeeded) {
         Write-Host "========== 卸载完成 ==========" -ForegroundColor Yellow
         Write-Host "请重启 Windows 以彻底移除 WSL 组件。" -ForegroundColor Yellow
-        if ($Restart) { Restart-Computer }
+        if ($Restart) {
+            Restart-Computer -Force
+        }
+        $rebootNow = (Read-Host "立即重启? [y/N]").Trim()
+        if ($rebootNow -in @("y","Y","yes","Yes")) {
+            Restart-Computer -Force
+        }
     } else {
         Write-Host "========== 卸载完成 ==========" -ForegroundColor Green
     }
